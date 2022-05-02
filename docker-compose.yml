@@ -1,0 +1,13 @@
+version: '3.3'
+
+
+
+services:
+  oste:
+    image: oste:latest
+    build: .
+    ports:
+    - "81:81"
+    - "444:444"
+    restart: always
+    command: sh -c "cd /app/Oste && httpserver 81"
