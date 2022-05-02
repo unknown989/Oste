@@ -17,6 +17,58 @@ use std::process::Command;
 use std::collections::HashMap;
 use url::Url;
 
+mod parser {
+    use std::collections::HashMap;
+    use std::env;
+
+    fn parse_equal(cmd: &str) -> (String, String) {
+        let s = cmd.split("=").collect::<Vec<&str>>();
+        return (
+            String::from(s[0].clone()).replace("-", ""),
+            String::from(s[1].clone()),
+        );
+    }
+    fn parse_normal(cmd: (String, String)) -> (String, String) {
+        return (
+            String::from(cmd.0.clone()).replace("-", ""),
+            String::from(cmd.1.clone()),
+        );
+    }
+
+    pub fn parse() -> HashMap<String, String> {
+        let mut args: Vec<String> = env::args().collect();
+        args.remove(0);
+
+        let mut args_hash: HashMap<String, String> = HashMap::new();
+
+        let mut i: usize = 0;
+        while i < args.len() {
+            let cmd = &args.clone()[i];
+            if cmd.find("=").is_some() {
+                let res = parse_equal(&cmd);
+                args_hash.insert(res.0, res.1);
+            } else {
+                if i + 1 >= args.len() {
+                    let res = parse_normal((cmd.clone(), String::from("true")));
+                    args_hash.insert(res.0, res.1);
+                    break;
+                } else {
+                    if args[i + 1].starts_with("-") {
+                        let res = parse_normal((cmd.to_string(), String::from("true")));
+                        args_hash.insert(res.0, res.1);
+                    } else {
+                        let res = parse_normal((cmd.to_string(), args[i + 1].to_string()));
+                        args_hash.insert(res.0, res.1);
+                        i += 1;
+                    }
+                }
+            }
+            i += 1;
+        }
+        return args_hash;
+    }
+}
+
 struct OsteConfig {
     ip: String,
     port: String,
@@ -31,9 +83,9 @@ impl OsteConfig {
         }
     }
 }
-fn get_config() -> Result<OsteConfig, Box<dyn std::error::Error>> {
+fn get_config(config_path: &str) -> Result<OsteConfig, Box<dyn std::error::Error>> {
     let mut config = Ini::new();
-    let mut _map = config.load("config.ini")?;
+    let mut _map = config.load(config_path)?;
     let map = _map["default"].clone();
     assert_ne!(map.get("ip"), None, "IP Field doesn't exist");
     let ip = map.get("ip").clone().unwrap().clone().unwrap();
@@ -45,8 +97,33 @@ fn get_config() -> Result<OsteConfig, Box<dyn std::error::Error>> {
     return Ok(OsteConfig { ip, port, password });
 }
 
+fn help() {
+    println!(
+        "usage: osteserver.exe [-c,--config] [-h,--help]
+    -c,--config : Custom configuration file (default : config.ini)
+    -h,--help : shows this menu
+    "
+    );
+}
+
 fn main() {
-    let osteconfig: Result<OsteConfig, Box<dyn std::error::Error>> = get_config();
+    let mut config_path: &str = "config.ini";
+    // Args parsing
+    let args: HashMap<String, String> = parser::parse();
+    if (args.contains_key("config")) {
+        config_path = args.get("config").unwrap();
+        println!("Loading {} as a config file", config_path);
+    }
+    if (args.contains_key("help")) {
+        println!(
+            "osteserver.exe [OPTIONS]
+        --config : a custom configuration file (default: config.ini)
+        --help : show this menu
+        "
+        );
+        return;
+    }
+    let osteconfig: Result<OsteConfig, Box<dyn std::error::Error>> = get_config(&config_path);
     let OsteConfig { ip, port, password } = osteconfig.unwrap();
     let server = format!("{}:{}", ip, port);
     let listener = TcpListener::bind(server).unwrap();
@@ -99,7 +176,9 @@ fn handle_connection(mut stream: TcpStream, password: &String) {
                 ));
             } else {
                 if (*password != *pwd.unwrap()) {
-                    response = String::from("HTTP/1.1 401 Unauthorized\r\nContent-Length: 12\r\n\r\nUnauthorized")
+                    response = String::from(
+                        "HTTP/1.1 401 Unauthorized\r\nContent-Length: 12\r\n\r\nUnauthorized",
+                    )
                 } else {
                     let output = if cfg!(target_os = "windows") {
                         Command::new("powershell")
@@ -132,6 +211,8 @@ fn handle_connection(mut stream: TcpStream, password: &String) {
                     }
                 }
             }
+        } else if (url_data.path().starts_with("/echo") && req.method.unwrap() == "GET") {
+            response = String::from("HTTP/1.1 200 OK\r\n\r\n");
         } else {
             response = String::from("HTTP/1.1 404 NOT FOUND\r\n\r\n");
         }
